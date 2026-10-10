@@ -1,0 +1,13 @@
+# Render.com blueprint: single service serving API + dashboard. Set MONGO_URI and ADMIN_TOKEN in the dashboard (sync: false).
+services:
+  - type: web
+    name: fairxai
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - {key: APP_ENV, value: production}
+      - {key: MONGO_DB, value: fairxai}
+      - {key: MONGO_URI, sync: false}
+      - {key: ADMIN_TOKEN, sync: false}
+      - {key: CORS_ORIGINS, sync: false}

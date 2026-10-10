@@ -1,0 +1,539 @@
+﻿/* FairXAI dashboard - vanilla JS SPA. Every number shown comes from the backend API. */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const f3 = v => (v === null || v === undefined || Number.isNaN(v)) ? "n/a" : Number(v).toFixed(3);
+const pc = v => (v === null || v === undefined) ? "n/a" : (v * 100).toFixed(1) + "%";
+const nice = s => String(s).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+const DISEASE_NAMES = {};
+const C = { navy: "#0b2545", teal: "#0f9d94", blue: "#3b82c4", amber: "#e0a030", red: "#c0392b", gray: "#9fb0c0" };
+const HELP = { sg: "Urine specific gravity (concentration)", al: "Urine albumin level (0-5 scale)", su: "Urine sugar level (0-5 scale)", bgr: "Random blood glucose (mg/dL)", bu: "Blood urea (mg/dL)", sc: "Serum creatinine (mg/dL)", sod: "Sodium (mEq/L)", pot: "Potassium (mEq/L)", hemo: "Haemoglobin (g/dL)", pcv: "Packed cell volume", wc: "White blood cell count (cells/cumm)", rc: "Red blood cell count (millions/cmm)", htn: "Hypertension", dm: "Diabetes mellitus", cad: "Coronary artery disease", pe: "Pedal oedema", ane: "Anaemia", pcc: "Pus cell clumps", ba: "Bacteria in urine", rbc: "Red blood cells in urine", pc: "Pus cells in urine", appet: "Appetite", ap_hi: "Systolic blood pressure (mmHg)", ap_lo: "Diastolic blood pressure (mmHg)", gluc: "Glucose level (1 normal, 2 above normal, 3 well above normal)", cholesterol: "Cholesterol (1 normal, 2 above normal, 3 well above normal)", gender: "Dataset coding: 1 and 2 (see dataset documentation)", smoke: "Smoker (0/1)", alco: "Alcohol intake (0/1)", active: "Physically active (0/1)", bmi: "Body mass index (kg/m2), derived from height and weight", bloodpressure: "Diastolic blood pressure (mmHg)", skinthickness: "Triceps skin-fold thickness (mm)", insulin: "2-hour serum insulin (mu U/ml)", diabetespedigreefunction: "Diabetes family-history score", pregnancies: "Number of pregnancies" };
+const PAGES = [["overview", "Overview", "M3 12l9-8 9 8M5 10v10h14V10"], ["predict", "Disease Prediction", "M12 21s-7-4.4-7-10a4 4 0 017-2.6A4 4 0 0119 11c0 5.6-7 10-7 10z"],["tb-image", "TB Image Prediction", "M12 3v18M3 12h18"],["breast-ultrasound", "Breast Ultrasound", "M12 3v18M3 12h18"], ["performance", "Model Performance", "M4 20V10M10 20V4M16 20v-7M22 20H2"], ["xai", "Explainability", "M11 4a7 7 0 100 14 7 7 0 000-14zM21 21l-5-5"], ["fairness", "Fairness & Bias", "M12 3v18M5 7h14M5 7l-3 8h6zM19 7l-3 8h6z"], ["datasets", "Dataset Explorer", "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"], ["history", "Prediction History", "M3 12a9 9 0 109-9M3 4v5h5M12 7v5l3 2"], ["reports", "Reports", "M7 3h8l5 5v13H7zM15 3v5h5M10 13h7M10 17h7"], ["settings", "Settings & Status", "M12 15a3 3 0 100-6 3 3 0 000 6zM19 12l2-1-2-4-2 1-2-1-1-2H9L8 7 6 8 4 7l-2 4 2 1v2l-2 1 2 4 2-1 2 1 1 2h4l1-2 2-1 2 1 2-4-2-1z"]];
+
+async function api(path, opt = {}) {
+  const h = { ...(opt.headers || {}) }; const tok = sessionStorage.getItem("adminToken"); if (tok) h["X-Admin-Token"] = tok;
+  if (opt.json) { h["Content-Type"] = "application/json"; opt.body = JSON.stringify(opt.json); }
+  let r; try { r = await fetch("/api" + path, { ...opt, headers: h }); } catch (e) { throw { message: "Cannot reach the server. Is the backend running?" }; }
+  const j = await r.json().catch(() => null);
+  if (!j || !j.ok) throw { message: j?.error?.message || `Request failed (${r.status})`, details: j?.error?.details, warnings: j?.error?.warnings, status: r.status };
+  return j.data;
+}
+const toast = m => { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 3200); };
+const loading = () => `<div class="spin" role="progressbar" aria-label="Loading"></div>`;
+const empty = (t, m) => `<div class="empty"><b>${esc(t)}</b>${esc(m || "")}</div>`;
+const errBox = e => `<div class="alert bad"><b>Error:</b> ${esc(e.message || e)}</div>`;
+function plot(id, data, layout = {}, h = 320) {
+  const el = typeof id === "string" ? $("#" + id) : id; if (!el) return;
+  Plotly.newPlot(el, data, { height: h, margin: { l: 55, r: 18, t: 28, b: 48 }, font: { family: "Inter, sans-serif", size: 12, color: "#33475b" }, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", legend: { orientation: "h", y: -0.22 }, colorway: [C.teal, C.navy, C.blue, C.amber], ...layout }, { responsive: true, displayModeBar: false });
+}
+const badgeFor = s => ({ trained: ["good", "Trained"], untrained: ["warn", "Dataset found - not trained"], dataset_missing: ["bad", "Dataset missing"], image_pipeline_required: ["warn", "Image pipeline required"] }[s] || ["gray", s]);
+let DIS = [];
+async function loadDiseases() { DIS = await api("/diseases"); DIS.forEach(d => DISEASE_NAMES[d.key] = d.name); return DIS; }
+const diseaseSelect = (id, { trainedOnly = false, all = false, value } = {}) => `<div class="field"><label for="${id}">Disease</label><select id="${id}">${all ? '<option value="">All diseases</option>' : ""}${DIS.map(d => `<option value="${d.key}" ${trainedOnly && d.status !== "trained" ? "disabled" : ""} ${value === d.key ? "selected" : ""}>${esc(d.name)}${trainedOnly && d.status !== "trained" ? " (unavailable)" : ""}</option>`).join("")}</select></div>`;
+const firstTrained = () => (DIS.find(d => d.status === "trained") || {}).key;
+
+/* ---------------- Overview ---------------- */
+async function overview(root) {
+  const s = await api("/dashboard/summary");
+  const trained = s.diseases.filter(d => d.status === "trained");
+  root.innerHTML = `<div class="toolbar">${diseaseSelect("fDis", { all: true })}</div>
+  <div class="grid g4" style="margin-bottom:18px">
+    <div class="card kpi"><div class="l">Supported disease domains</div><div class="v">${s.supported}</div></div>
+    <div class="card kpi"><div class="l">Trained models</div><div class="v">${s.trained}<span style="font-size:16px;color:var(--mut)"> / ${s.supported}</span></div></div>
+    <div class="card kpi"><div class="l">Last model training</div><div class="v" style="font-size:18px;padding-top:8px">${s.last_trained ? new Date(s.last_trained).toLocaleString() : "none yet"}</div></div>
+    <div class="card kpi"><div class="l">Stored predictions</div><div class="v">${s.predictions.total}</div><div class="hint">${s.database.persistent ? "MongoDB" : "in-memory (not persistent)"}</div></div>
+  </div><div id="ovBody"></div>`;
+  const draw = () => {
+    const k = $("#fDis").value; const ds = s.diseases.filter(d => !k || d.key === k);
+    const tr = ds.filter(d => d.status === "trained");
+    $("#ovBody").innerHTML = `
+    <div class="grid g3">${ds.map(d => { const [b, t] = badgeFor(d.status); return `<div class="card"><div class="dstat"><div><h3>${esc(d.name)}</h3><span class="hint">${d.status === "trained" ? esc(d.algorithm) + " - " + esc(d.version) : esc(d.message || "")}</span></div><span class="badge ${b}">${t}</span></div>
+      ${d.test ? `<div class="mini"><div><b>${f3(d.test.roc_auc)}</b><span>Test ROC-AUC</span></div><div><b>${pc(d.test.recall)}</b><span>Test recall</span></div><div><b>${pc(d.test.specificity)}</b><span>Test specificity</span></div></div>
+      <p class="hint" style="margin:10px 0 0">Held-out test set, n=${d.test.n}. Top features: ${d.top_features.map(esc).join(", ")}. Fairness: <b>${esc(nice(d.fairness_status))}</b></p>` : ""}</div>`; }).join("")}</div>
+    <div class="grid g2" style="margin-top:18px">
+      <div class="card"><h3>Disease-wise test performance</h3><p class="sub">Final held-out test set (never used for model selection)</p>${tr.length ? '<div id="pBar" class="plot"></div>' : empty("No trained models", "Train a model in Settings & Status.")}</div>
+      <div class="card"><h3>Dataset quality: rows before vs after cleaning</h3><p class="sub">From the stored data-quality reports</p>${Object.keys(s.quality).length ? '<div id="pQ" class="plot"></div>' : empty("No quality reports yet")}</div>
+      <div class="card"><h3>Prediction activity</h3><p class="sub">Stored predictions per day ${k ? "(all diseases; filter applies to history page)" : ""}</p>${s.predictions.daily.length ? '<div id="pAct" class="plot"></div>' : empty("No predictions yet", "Make one on the Disease Prediction page.")}</div>
+      <div class="card"><h3>Training runs</h3><p class="sub">Most recent</p>${s.runs.length ? `<div class="tw"><table><tr><th>Disease</th><th>Status</th><th>Started</th></tr>${s.runs.map(r => `<tr><td>${esc(DISEASE_NAMES[r.disease])}</td><td><span class="badge ${r.status === "completed" ? "good" : r.status === "failed" ? "bad" : "warn"}">${esc(r.status)}</span></td><td>${esc(r.started_at?.slice(0, 19).replace("T", " "))}</td></tr>`).join("")}</table></div>` : empty("No runs recorded in this database", "Models may have been trained from the command line.")}</div>
+    </div>`;
+    if (tr.length) plot("pBar", ["roc_auc", "recall", "pr_auc"].map(m => ({ type: "bar", name: m.replace("_", "-").toUpperCase(), x: tr.map(d => d.short), y: tr.map(d => d.test[m]), hovertemplate: "%{y:.3f}" })), { barmode: "group", yaxis: { range: [0, 1.02] } });
+    const qk = Object.keys(s.quality).filter(x => !k || x === k);
+    if (qk.length) plot("pQ", [{ type: "bar", name: "Original rows", x: qk.map(x => DISEASE_NAMES[x]), y: qk.map(x => s.quality[x].original_rows) }, { type: "bar", name: "Cleaned rows", x: qk.map(x => DISEASE_NAMES[x]), y: qk.map(x => s.quality[x].cleaned_rows) }], { barmode: "group", yaxis: { type: "log", title: "rows (log)" } });
+    if (s.predictions.daily.length) plot("pAct", [{ type: "scatter", mode: "lines+markers", x: s.predictions.daily.map(x => x.date), y: s.predictions.daily.map(x => x.count), line: { color: C.teal, width: 3, shape: "spline" } }], { yaxis: { title: "predictions", rangemode: "tozero" } });
+  };
+  $("#fDis").onchange = draw; draw();
+}
+
+/* ---------------- Predict ---------------- */
+async function predictPage(root) {
+  root.innerHTML = `<div class="grid g2" style="grid-template-columns:minmax(320px,1fr) minmax(320px,1.2fr);align-items:start">
+  <div class="card"><div class="toolbar">${diseaseSelect("pDis", { trainedOnly: true, value: firstTrained() })}</div><div id="pForm">${loading()}</div></div>
+  <div id="pOut"><div class="card">${empty("No result yet", "Fill in the form and run the model.")}</div></div></div>`;
+  const load = async () => {
+    const d = $("#pDis").value; $("#pOut").innerHTML = `<div class="card">${empty("No result yet", "Fill in the form and run the model.")}</div>`;
+    if (!d) { $("#pForm").innerHTML = empty("No trained model available", "Train a model first (Settings & Status)."); return; }
+    $("#pForm").innerHTML = loading();
+    try {
+      const sc = await api(`/models/${d}/schema`);
+      $("#pForm").innerHTML = `<p class="sub">Model ${esc(sc.version)} - fields below are exactly this disease model's feature set.</p>
+      <form id="frm" novalidate><div class="forms">${sc.fields.map(f => fieldHtml(f)).join("")}</div>
+      <p class="hint" style="margin-top:14px"><label><input type="checkbox" id="wLime" style="width:auto"> Also compute LIME (slower)</label></p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px"><button class="btn" id="go" type="submit">Run model</button><button class="btn sec" type="button" id="fill">Fill with typical training values</button><button class="btn sec" type="reset">Reset</button></div></form>
+      <div class="alert info" style="margin-top:14px">${esc(sc.disclaimer)}</div>`;
+      $("#fill").onclick = () => sc.fields.forEach(f => { const e = $("#f_" + f.name); if (!e) return; e.value = f.type === "category" ? f.mode : f.type === "binary" ? f.options[0] : f.median; });
+      $("#frm").onsubmit = async ev => {
+        ev.preventDefault(); const inputs = {}; let bad = 0;
+        sc.fields.forEach(f => { const e = $("#f_" + f.name), er = $("#e_" + f.name); const v = e.value.trim(); er.textContent = ""; e.classList.remove("invalid");
+          const fail = m => { er.textContent = m; e.classList.add("invalid"); bad++; };
+          if (v === "") { if (!f.allow_missing) fail("Required"); return; }
+          if (f.type === "number") { const n = Number(v); if (!isFinite(n)) return fail("Enter a number"); if (f.hard_min != null && (n < f.hard_min || n > f.hard_max)) return fail(`Must be ${f.hard_min}-${f.hard_max}`); inputs[f.name] = n; } else inputs[f.name] = v; });
+        if (bad) { toast(`${bad} field(s) need attention`); return; }
+        const btn = $("#go"); btn.disabled = true; btn.textContent = "Running...";
+        $("#pOut").innerHTML = `<div class="card">${loading()}<p class="hint" style="text-align:center">Running model${$("#wLime").checked ? " and LIME" : ""}...</p></div>`;
+        try { renderResult(await api(`/predict/${d}`, { method: "POST", json: { inputs, lime: $("#wLime").checked } })); }
+        catch (e) { $("#pOut").innerHTML = `<div class="card">${errBox(e)}${(e.details || []).map(x => `<div class="err">${esc(x)}</div>`).join("")}</div>`; }
+        btn.disabled = false; btn.textContent = "Run model";
+      };
+    } catch (e) { $("#pForm").innerHTML = errBox(e); }
+  };
+  $("#pDis").onchange = load; load();
+}
+function fieldHtml(f) {
+  const help = HELP[f.name] || ""; const req = f.allow_missing ? "" : " *";
+  let ctl;
+  if (f.type === "category" || f.type === "binary") ctl = `<select id="f_${esc(f.name)}"><option value="">Select...</option>${f.options.map(o => `<option>${esc(o)}</option>`).join("")}</select>`;
+  else { const lo = f.hard_min ?? "", hi = f.hard_max ?? ""; ctl = `<input id="f_${esc(f.name)}" type="number" inputmode="decimal" step="${f.integer ? 1 : "any"}" ${lo !== "" ? `min="${lo}" max="${hi}"` : ""} placeholder="e.g. ${esc(+f.median.toFixed(2))}">`; }
+  const range = f.type === "number" ? `Training range ${+f.min_seen.toFixed(2)}-${+f.max_seen.toFixed(2)}${f.hard_min != null ? `; allowed ${f.hard_min}-${f.hard_max}` : ""}` : "";
+  return `<div class="field"><label for="f_${esc(f.name)}">${esc(f.label)}${req}</label>${ctl}<span class="hint">${esc(help)}${help && range ? " - " : ""}${esc(range)}${f.allow_missing ? " (optional)" : ""}</span><span class="err" id="e_${esc(f.name)}"></span></div>`;
+}
+function renderResult(r) {
+  const sh = r.explanations.shap, li = r.explanations.lime; const p = r.probability, t = r.threshold;
+  $("#pOut").innerHTML = `<div class="card result ${r.flagged ? "flag" : "noflag"}"><div class="dstat"><div><div class="hint">${esc(r.disease_name)} - ${esc(r.algorithm)} (${esc(r.model_version)})</div><div class="big">${(p * 100).toFixed(1)}%</div><div class="hint">calibrated model score</div></div><span class="badge ${r.flagged ? "warn" : "good"}">${esc(r.label)}</span></div>
+    <div class="gauge" aria-label="score gauge"><i style="width:${p * 100}%"></i><u style="left:${t * 100}%" title="threshold"></u></div><div class="hint">Decision threshold ${t.toFixed(3)} (${esc(r.threshold_rule)}).</div>
+    <div class="alert ${r.confidence.near_threshold ? "warn" : "info"}"><b>Confidence:</b> ${esc(r.confidence.note)} On the held-out test set (n=${r.confidence.test_n}) this model had ROC-AUC ${f3(r.confidence.test_roc_auc)}, recall ${pc(r.confidence.test_recall)}, specificity ${pc(r.confidence.test_specificity)}, Brier ${f3(r.confidence.test_brier)}. Scores were ${esc(r.confidence.calibration.toLowerCase())}.</div>
+    ${r.warnings.map(w => `<div class="alert warn">${esc(w)}</div>`).join("")}</div>
+  <div class="card" style="margin-top:18px"><h3>Why this score? (SHAP)</h3>${sh && !sh.error ? `<p class="sub">${esc(sh.narrative)} Values are in ${esc(sh.output_space)} units. ${esc(sh.note)}</p><div id="shapP" class="plot"></div>` : `<div class="alert warn">${esc(sh?.error || "Not available")}</div>`}</div>
+  ${li ? `<div class="card" style="margin-top:18px"><h3>LIME local explanation</h3>${li.error ? `<div class="alert warn">${esc(li.error)}</div>` : `<p class="sub">${esc(li.note)} Local fit R&sup2; = ${f3(li.r2_of_local_fit)}</p><div id="limeP" class="plot"></div>`}</div>` : ""}
+  <div class="card" style="margin-top:18px"><h3>Limitations of this result</h3><ul class="clean">${r.limitations.map(x => `<li>${esc(x)}</li>`).join("")}<li>Feature influence shows what the model relies on; it is not evidence of cause.</li></ul><div class="alert info">${esc(r.disclaimer)}</div></div>`;
+  if (sh && !sh.error) { const c = [...sh.contributions].reverse(); plot("shapP", [{ type: "bar", orientation: "h", y: c.map(x => `${nice(x.feature)} = ${x.value ?? "missing"}`), x: c.map(x => x.shap), marker: { color: c.map(x => x.shap > 0 ? C.amber : C.blue) }, hovertemplate: "%{x:.4f}<extra></extra>" }], { margin: { l: 190, r: 18, t: 10, b: 40 }, xaxis: { title: "Pushes score down  <  0  >  pushes score up", zeroline: true } }, 340); }
+  if (li && !li.error) { const c = [...li.items].reverse(); plot("limeP", [{ type: "bar", orientation: "h", y: c.map(x => x.rule), x: c.map(x => x.weight), marker: { color: c.map(x => x.weight > 0 ? C.amber : C.blue) } }], { margin: { l: 220, r: 18, t: 10, b: 40 }, xaxis: { title: "Weight toward positive class" } }, 340); }
+}
+
+/* ---------------- Performance ---------------- */
+async function performance(root) {
+  root.innerHTML = `<div class="toolbar">${diseaseSelect("fDis", { trainedOnly: true, value: firstTrained() })}<div class="field"><label for="fVer">Model version</label><select id="fVer"></select></div></div><div id="body"></div>`;
+  const load = async () => {
+    const d = $("#fDis").value; if (!d) { $("#body").innerHTML = empty("No trained models"); return; } $("#body").innerHTML = loading();
+    try {
+      const m = await api(`/models/${d}/metrics${$("#fVer").value && $("#fVer").dataset.d === d ? "?version=" + $("#fVer").value : ""}`);
+      $("#fVer").dataset.d = d; $("#fVer").innerHTML = m.versions.slice().reverse().map(v => `<option ${v === m.version ? "selected" : ""}>${v}</option>`).join("");
+      const t = m.test_metrics, v = m.validation_metrics, [[tn, fp], [fn, tp]] = t.confusion_matrix;
+      const row = (n, o) => `<tr><td>${n}</td>${["accuracy", "precision", "recall", "specificity", "f1", "roc_auc", "pr_auc", "brier"].map(k => `<td>${f3(o[k])}</td>`).join("")}</tr>`;
+      $("#body").innerHTML = `<div class="card"><h3>Selected model: ${esc(m.algorithm)}</h3><p class="sub">${esc(m.selection_reason)}</p>
+        <div class="tw"><table><tr><th>Evaluated on</th><th>Accuracy</th><th>Precision</th><th>Recall</th><th>Specificity</th><th>F1</th><th>ROC-AUC</th><th>PR-AUC</th><th>Brier</th></tr>${row(`Validation (n=${v.n}) - used for selection`, v)}${row(`<b>Final TEST (n=${t.n})</b> - untouched`, t)}</table></div>
+        <p class="hint">95% CI on test: recall ${t.ci95.recall.map(f3).join(" - ")}, specificity ${t.ci95.specificity.map(f3).join(" - ")}, accuracy ${t.ci95.accuracy.map(f3).join(" - ")}. Seed ${m.seed}; split ${esc(m.split.scheme)}; ${esc(m.class_balance_method)}.</p></div>
+        <div class="card" style="margin-top:18px"><h3>Model comparison</h3><p class="sub">Candidates tuned by randomized search with stratified CV on the training split; validation metrics at threshold 0.5.</p><div class="tw"><table><tr><th>Model</th><th>CV ROC-AUC (mean +/- sd)</th><th>Val ROC-AUC</th><th>Val PR-AUC</th><th>Val recall</th><th>Val F1</th><th>Train time (s)</th><th>Best params</th></tr>
+        ${m.candidates.map(c => `<tr class="${c.selected ? "sel" : ""}"><td>${esc(c.model)} ${c.selected ? '<span class="badge">selected</span>' : ""}</td><td>${f3(c.cv_roc_auc_mean)} &plusmn; ${f3(c.cv_roc_auc_std)}</td><td>${f3(c.val_metrics.roc_auc)}</td><td>${f3(c.val_metrics.pr_auc)}</td><td>${f3(c.val_metrics.recall)}</td><td>${f3(c.val_metrics.f1)}</td><td>${c.train_time_s}</td><td><code>${esc(JSON.stringify(c.best_params))}</code></td></tr>`).join("")}</table></div></div>
+        <div class="grid g2" style="margin-top:18px"><div class="card"><h3>Confusion matrix (test)</h3><p class="sub">Threshold ${m.threshold.toFixed(3)}</p><div id="cm" class="plot"></div></div>
+        <div class="card"><h3>Cost of errors</h3><p class="sub">What mistakes mean for this disease</p><ul class="clean"><li><b>False negatives (${fn}):</b> ${esc(m.error_costs.false_negative)}</li><li><b>False positives (${fp}):</b> ${esc(m.error_costs.false_positive)}</li></ul><p class="hint">Threshold rule: ${esc(m.threshold_rule)}.</p>
+        <p class="hint">Per-class (test): negative precision ${f3(t.per_class.negative.precision)} / recall ${f3(t.per_class.negative.recall)} (n=${t.per_class.negative.support}); positive precision ${f3(t.per_class.positive.precision)} / recall ${f3(t.per_class.positive.recall)} (n=${t.per_class.positive.support}).</p></div>
+        <div class="card"><h3>ROC curve</h3><div id="roc" class="plot"></div></div><div class="card"><h3>Precision-recall curve</h3><div id="pr" class="plot"></div></div>
+        <div class="card"><h3>Calibration (reliability)</h3><p class="sub">Test Brier ${f3(t.brier)} calibrated vs ${f3(t.brier_uncalibrated)} uncalibrated</p><div id="cal" class="plot"></div></div>
+        <div class="card"><h3>Limitations</h3><ul class="clean">${m.limitations.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div></div>`;
+      plot("cm", [{ type: "heatmap", z: [[tn, fp], [fn, tp]], x: ["Pred negative", "Pred positive"], y: ["Actual negative", "Actual positive"], colorscale: [[0, "#eef6f6"], [1, C.teal]], showscale: false, text: [[`TN ${tn}`, `FP ${fp}`], [`FN ${fn}`, `TP ${tp}`]], texttemplate: "%{text}", textfont: { size: 18 } }], { yaxis: { autorange: "reversed" }, margin: { l: 110, r: 10, t: 10, b: 40 } }, 280);
+      const diag = { x: [0, 1], y: [0, 1], mode: "lines", line: { dash: "dot", color: C.gray }, showlegend: false };
+      plot("roc", [{ x: t.roc_curve.fpr, y: t.roc_curve.tpr, mode: "lines", name: `Test AUC ${f3(t.roc_auc)}`, line: { color: C.teal, width: 3 } }, { x: v.roc_curve.fpr, y: v.roc_curve.tpr, mode: "lines", name: `Validation AUC ${f3(v.roc_auc)}`, line: { color: C.blue, dash: "dash" } }, diag], { xaxis: { title: "False positive rate" }, yaxis: { title: "True positive rate" } });
+      plot("pr", [{ x: t.pr_curve.recall, y: t.pr_curve.precision, mode: "lines", name: `Test PR-AUC ${f3(t.pr_auc)}`, line: { color: C.teal, width: 3 } }, { x: v.pr_curve.recall, y: v.pr_curve.precision, mode: "lines", name: `Validation PR-AUC ${f3(v.pr_auc)}`, line: { color: C.blue, dash: "dash" } }], { xaxis: { title: "Recall" }, yaxis: { title: "Precision", range: [0, 1.02] } });
+      if (t.calibration_curve) plot("cal", [{ x: t.calibration_curve.mean_predicted, y: t.calibration_curve.fraction_positive, mode: "lines+markers", name: "Test (calibrated)", line: { color: C.teal } }, diag], { xaxis: { title: "Mean predicted probability" }, yaxis: { title: "Observed fraction positive" } });
+    } catch (e) { $("#body").innerHTML = errBox(e); }
+  };
+  $("#fDis").onchange = () => { $("#fVer").dataset.d = ""; load(); }; $("#fVer").onchange = load; load();
+}
+
+/* ---------------- XAI ---------------- */
+async function xai(root) {
+  root.innerHTML = `<div class="toolbar">${diseaseSelect("fDis", { trainedOnly: true, value: firstTrained() })}</div><div id="body"></div>`;
+  const load = async () => {
+    const d = $("#fDis").value; if (!d) { $("#body").innerHTML = empty("No trained models"); return; } $("#body").innerHTML = loading();
+    try {
+      const r = await api(`/explain/${d}/global`), g = r.explanation;
+      if (g.error) { $("#body").innerHTML = `<div class="alert warn">${esc(g.error)}</div>`; return; }
+      const imp = g.importance.slice(0, 15).reverse(); const top = Object.keys(g.beeswarm).reverse();
+      $("#body").innerHTML = `<div class="alert info">${esc(g.note)} Explained model: <b>${esc(r.algorithm)}</b> (${esc(r.version)}), ${g.explainer}, output in ${esc(g.output_space)} units, ${g.n_samples} test records. For a single patient, use the Disease Prediction page (SHAP + LIME).</div>
+      <div class="grid g2"><div class="card"><h3>Global feature importance (SHAP bar)</h3><p class="sub">Mean absolute SHAP value per original feature</p><div id="bar" class="plot"></div></div>
+      <div class="card"><h3>SHAP summary plot</h3><p class="sub">Each dot is a test record; colour = feature value (low to high); position = effect on model output. Categorical features show neutral colour.</p><div id="swarm" class="plot"></div></div></div>`;
+      plot("bar", [{ type: "bar", orientation: "h", y: imp.map(x => nice(x.feature)), x: imp.map(x => x.mean_abs_shap), marker: { color: C.teal } }], { margin: { l: 150, r: 18, t: 10, b: 40 }, xaxis: { title: "mean |SHAP|" } }, 440);
+      const tr = top.map((f, i) => { const b = g.beeswarm[f]; return { type: "scatter", mode: "markers", x: b.shap, y: b.shap.map(() => i + (Math.random() - .5) * .5), marker: { size: 6, color: b.value_rank, colorscale: [[0, C.blue], [1, C.red]], cmin: 0, cmax: 1, showscale: i === top.length - 1, colorbar: { title: "value", tickvals: [0, 1], ticktext: ["low", "high"], len: .5 } }, text: b.raw.map(x => `${nice(f)}: ${x}`), hovertemplate: "%{text}<br>SHAP %{x:.4f}<extra></extra>", showlegend: false }; });
+      plot("swarm", tr, { margin: { l: 150, r: 18, t: 10, b: 40 }, yaxis: { tickvals: top.map((_, i) => i), ticktext: top.map(nice), zeroline: false }, xaxis: { title: "SHAP value", zeroline: true } }, 440);
+    } catch (e) { $("#body").innerHTML = errBox(e); }
+  };
+  $("#fDis").onchange = load; load();
+}
+
+/* ---------------- Fairness ---------------- */
+async function fairness(root) {
+  root.innerHTML = `<div class="toolbar">${diseaseSelect("fDis", { trainedOnly: true, value: firstTrained() })}<div class="field"><label for="fSg">Subgroup attribute</label><select id="fSg"><option value="">All available</option></select></div></div><div id="body"></div>`;
+  const load = async () => {
+    const d = $("#fDis").value; if (!d) { $("#body").innerHTML = empty("No trained models"); return; } $("#body").innerHTML = loading();
+    try {
+      const f = await api(`/fairness/${d}${$("#fSg").value ? "?subgroup=" + $("#fSg").value : ""}`);
+      const lim = `<div class="card" style="margin-top:18px"><h3>Limitations - please read</h3><ul class="clean">${f.limitations.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
+      if (f.status !== "available") { $("#body").innerHTML = `<div class="card">${empty("Fairness audit not available", f.reason)}</div>${lim}`; return; }
+      $("#fSg").innerHTML = '<option value="">All available</option>' + ["sex", "age_group"].map(a => `<option value="${a}" ${$("#fSg").value === a ? "selected" : ""}>${nice(a)}</option>`).join("");
+      $("#body").innerHTML = `<div class="alert info">Audit of model ${esc(f.model_version)} on the held-out test set at threshold ${f.threshold.toFixed(3)}. Groups need n&ge;${f.min_group_size} with at least 10 positives and 10 negatives to be called reliable. <b>These metrics do not show that the model is fair or unbiased.</b></div>
+      ${f.attributes.map((a, i) => `<div class="card" style="margin-top:18px"><h3>${nice(a.attribute)} <span class="hint">(column <code>${esc(a.source_column)}</code>)</span></h3><p class="sub">${esc(a.note)}</p>
+        <div class="tw"><table><tr><th>Group</th><th>n</th><th>Positives</th><th>Selection rate</th><th>TPR (recall)</th><th>FPR</th><th>Precision</th><th>Accuracy</th><th>Reliable?</th></tr>${a.groups.map(g => `<tr><td>${esc(g.group)}</td><td>${g.n}</td><td>${g.n_positive}</td><td>${pc(g.selection_rate)}</td><td>${pc(g.tpr)} <span class="hint">[${g.ci.tpr.map(x => x == null ? "-" : (x * 100).toFixed(0)).join("-")}]</span></td><td>${pc(g.fpr)}</td><td>${pc(g.precision)}</td><td>${pc(g.accuracy)}</td><td><span class="badge ${g.reliable ? "good" : "warn"}">${g.reliable ? "yes" : "too small"}</span></td></tr>`).join("")}</table></div><p class="hint">Brackets: 95% Wilson interval (%).</p>
+        ${a.disparities ? `<div class="grid g4" style="margin:12px 0"><div class="card kpi"><div class="l">Demographic parity diff.</div><div class="v">${f3(a.disparities.demographic_parity_difference)}</div></div><div class="card kpi"><div class="l">Equal opportunity diff. (TPR gap)</div><div class="v">${f3(a.disparities.equal_opportunity_difference)}</div></div><div class="card kpi"><div class="l">Equalized odds diff.</div><div class="v">${f3(a.disparities.equalized_odds_difference)}</div></div><div class="card kpi"><div class="l">Accuracy gap</div><div class="v">${f3(a.disparities.accuracy_difference)}</div></div></div><div id="fp${i}" class="plot"></div>` : `<div class="alert warn">Parity metrics not computed: fewer than two groups are large enough.</div>`}
+        ${a.mitigation ? mitigationHtml(a.mitigation) : ""}</div>`).join("")}${lim}`;
+      f.attributes.forEach((a, i) => { if (!a.disparities) return; const gs = a.groups; const mk = (k, n, col) => ({ type: "bar", name: n, x: gs.map(g => g.group + (g.reliable ? "" : " (small)")), y: gs.map(g => g[k]), marker: { color: col }, error_y: k === "accuracy" ? undefined : { type: "data", symmetric: false, array: gs.map(g => g.ci[k] && g[k] != null ? g.ci[k][1] - g[k] : 0), arrayminus: gs.map(g => g.ci[k] && g[k] != null ? g[k] - g.ci[k][0] : 0) } });
+        plot("fp" + i, [mk("tpr", "TPR", C.teal), mk("fpr", "FPR", C.amber), mk("selection_rate", "Selection rate", C.blue)], { barmode: "group", yaxis: { range: [0, 1.05], title: "rate (95% CI)" } }, 300); });
+    } catch (e) { $("#body").innerHTML = errBox(e); }
+  };
+  $("#fDis").onchange = () => { $("#fSg").value = ""; load(); }; $("#fSg").onchange = load; load();
+}
+const mitigationHtml = m => m.status !== "computed" ? `<div class="alert warn">Mitigation comparison ${esc(m.status)}: ${esc(m.reason || m.error || "")}</div>` : `<h3 style="margin-top:14px">Mitigation comparison (post-processing)</h3><p class="sub">${esc(m.method)}. ${esc(m.note)}</p><div class="tw"><table><tr><th></th><th>Accuracy</th><th>Recall</th><th>TPR gap</th><th>FPR gap</th><th>Parity diff.</th></tr>${["before", "after"].map(k => `<tr><td><b>${k === "before" ? "Deployed model" : "After mitigation"}</b></td><td>${pc(m[k].accuracy)}</td><td>${pc(m[k].recall)}</td><td>${f3(m[k].disparities?.tpr_difference)}</td><td>${f3(m[k].disparities?.fpr_difference)}</td><td>${f3(m[k].disparities?.demographic_parity_difference)}</td></tr>`).join("")}</table></div>`;
+
+/* ---------------- Datasets ---------------- */
+async function datasets(root) {
+  root.innerHTML = `<div class="toolbar">${diseaseSelect("fDis", { value: (DIS.find(d => d.dataset_status === "tabular") || DIS[0]).key })}</div><div id="body"></div>`;
+  const load = async () => {
+    const d = $("#fDis").value; $("#body").innerHTML = loading();
+    try {
+      const r = await api(`/datasets/${d}/report`); const miss = Object.entries(r.missing_before).sort((a, b) => b[1] - a[1]).slice(0, 15);
+      $("#body").innerHTML = `<div class="grid g4"><div class="card kpi"><div class="l">Rows (original &rarr; cleaned)</div><div class="v" style="font-size:24px">${r.original_rows.toLocaleString()} &rarr; ${r.cleaned_rows.toLocaleString()}</div></div><div class="card kpi"><div class="l">Columns (original &rarr; cleaned)</div><div class="v" style="font-size:24px">${r.original_columns} &rarr; ${r.cleaned_columns}</div></div><div class="card kpi"><div class="l">Duplicates removed</div><div class="v">${r.duplicate_rows_removed}</div></div><div class="card kpi"><div class="l">Minority / majority ratio</div><div class="v">${r.imbalance_ratio}</div></div></div>
+      <p class="hint">Source <code>${esc(r.source_file)}</code>; target <code>${esc(r.target_column)}</code> (${esc(r.target_encoding.rule)}). ${esc(r.missing_note)}</p>
+      <div class="grid g2"><div class="card"><h3>Class distribution</h3><div id="cd" class="plot"></div></div><div class="card"><h3>Missing values before vs after cleaning</h3>${miss.length || Object.keys(r.missing_after).length ? '<div id="mv" class="plot"></div>' : empty("No missing values")}</div>
+      <div class="card"><h3>Feature distribution by class</h3><div class="field" style="max-width:260px"><label for="fFeat">Feature</label><select id="fFeat">${Object.keys(r.distributions).map(k => `<option>${esc(k)}</option>`).join("")}</select></div><div id="hist" class="plot"></div></div>
+      <div class="card"><h3>Correlation (numeric features)</h3>${r.correlation ? '<div id="corr" class="plot"></div>' : empty("Not enough numeric features")}</div></div>
+      <div class="grid g2" style="margin-top:18px"><div class="card"><h3>Cleaning log</h3>${r.cleaning_log.length ? `<div class="tw"><table><tr><th>Operation</th><th>Column</th><th>Rows</th><th>Detail</th></tr>${r.cleaning_log.map(l => `<tr><td>${esc(l.op)}</td><td>${esc(l.column || (l.columns || []).join(","))}</td><td>${l.rows ?? ""}</td><td style="white-space:normal">${esc(l.detail || "")}</td></tr>`).join("")}</table></div>` : "<p class='hint'>No cleaning operations were required.</p>"}<p class="hint">Outliers (beyond 3&times;IQR) are reported, never deleted: ${esc(JSON.stringify(r.outliers_iqr3))}</p></div>
+      <div class="card"><h3>Features, leakage and limitations</h3><p><b>Retained (${r.features_retained.length}):</b> ${r.features_retained.map(x => `<code>${esc(x)}</code>`).join(" ")}</p><p><b>Removed:</b> ${r.features_removed.length ? r.features_removed.map(x => `<code>${esc(x.column)}</code> (${esc(x.reason)})`).join(", ") : "none"}</p><p><b>Leakage checks:</b></p><ul class="clean">${r.leakage_checks.map(x => `<li>${esc(x.column || "")} ${esc(x.risk)} - ${esc(x.action)}</li>`).join("")}</ul><p><b>Limitations:</b></p><ul class="clean">${r.limitations.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div></div>
+      <div class="card" style="margin-top:18px"><h3>Cleaned data preview (first 50 rows)</h3><div class="tw" style="max-height:340px"><table><tr>${Object.keys(r.preview[0]).map(k => `<th>${esc(k)}</th>`).join("")}</tr>${r.preview.map(row => `<tr>${Object.values(row).map(v => `<td>${esc(v)}</td>`).join("")}</tr>`).join("")}</table></div></div>`;
+      plot("cd", [{ type: "bar", x: Object.keys(r.target_distribution).map(k => k === "1" ? "Positive (1)" : "Negative (0)"), y: Object.values(r.target_distribution), marker: { color: [C.blue, C.teal] } }], { yaxis: { title: "records" } }, 280);
+      const allm = [...new Set([...miss.map(x => x[0]), ...Object.keys(r.missing_after)])].slice(0, 15);
+      if ($("#mv")) plot("mv", [{ type: "bar", name: "Before", x: allm, y: allm.map(k => r.missing_before[k] || 0), marker: { color: C.amber } }, { type: "bar", name: "After cleaning (imputed later in pipeline)", x: allm, y: allm.map(k => r.missing_after[k] || 0), marker: { color: C.teal } }], { barmode: "group", yaxis: { title: "missing cells" } }, 280);
+      const hist = () => { const x = r.distributions[$("#fFeat").value]; if (!x) return; const mid = x.bins.slice(0, -1).map((b, i) => (b + x.bins[i + 1]) / 2); plot("hist", [0, 1].map(k => ({ type: "bar", name: k ? "Positive" : "Negative", x: mid, y: x.counts[k], opacity: .75, marker: { color: k ? C.teal : C.blue } })), { barmode: "overlay", yaxis: { title: "records" } }, 280); };
+      if ($("#fFeat")) { $("#fFeat").onchange = hist; hist(); }
+      if (r.correlation) plot("corr", [{ type: "heatmap", z: r.correlation.matrix, x: r.correlation.columns, y: r.correlation.columns, zmin: -1, zmax: 1, colorscale: "RdBu", reversescale: true }], { margin: { l: 110, r: 10, t: 10, b: 110 }, yaxis: { autorange: "reversed" } }, 400);
+    } catch (e) { const s = DIS.find(x => x.key === d); $("#body").innerHTML = `<div class="card">${empty(s?.status === "dataset_missing" ? "Dataset missing" : "No data-quality report", e.message)}</div>`; }
+  };
+  $("#fDis").onchange = load; load();
+}
+
+/* ---------------- History ---------------- */
+async function history(root) {
+  root.innerHTML = `<div class="toolbar">${diseaseSelect("hD", { all: true })}<div class="field"><label for="hF">From</label><input type="date" id="hF"></div><div class="field"><label for="hT">To</label><input type="date" id="hT"></div><div class="field"><label for="hV">Model version</label><input type="text" id="hV" placeholder="e.g. v2026..."></div><div class="field"><label for="hS">Result</label><select id="hS"><option value="">Any</option><option value="true">Above threshold</option><option value="false">Below threshold</option></select></div><button class="btn sec" id="hR">Refresh</button></div><div id="body"></div>`;
+  const load = async () => {
+    $("#body").innerHTML = loading();
+    const q = new URLSearchParams(); [["disease", "hD"], ["from", "hF"], ["to", "hT"], ["model_version", "hV"], ["flagged", "hS"]].forEach(([k, i]) => { const v = $("#" + i).value.trim(); if (v) q.set(k, v); });
+    try {
+      const r = await api("/predictions?" + q);
+      $("#body").innerHTML = `${r.database_mode !== "mongodb" ? `<div class="alert warn">Database mode: <b>${esc(r.database_mode)}</b>. Records are not persistent across restarts. Set MONGO_URI to use MongoDB.</div>` : ""}
+      ${r.count ? `<div class="card"><h3>Predictions over time</h3><div id="hp" class="plot"></div></div><div class="card" style="margin-top:18px"><h3>${r.count} record(s)</h3><div class="tw"><table><tr><th>Time (UTC)</th><th>Disease</th><th>Model</th><th>Score</th><th>Result</th><th>Top SHAP features</th><th></th></tr>${r.items.map(p => `<tr><td>${esc(p.created_at.slice(0, 19).replace("T", " "))}</td><td>${esc(DISEASE_NAMES[p.disease])}</td><td>${esc(p.model_version)}</td><td>${(p.probability * 100).toFixed(1)}%</td><td><span class="badge ${p.flagged ? "warn" : "good"}">${p.flagged ? "above threshold" : "below"}</span></td><td style="white-space:normal">${esc((p.explanation_meta?.shap_top || []).slice(0, 3).map(x => x[0]).join(", "))}</td><td><button class="btn sm sec" data-del="${esc(p.prediction_id)}">Delete</button></td></tr>`).join("")}</table></div></div>` : `<div class="card">${empty("No predictions match", "Run a prediction or change the filters.")}</div>`}`;
+      if (r.count) plot("hp", [{ type: "bar", x: r.daily.map(x => x.date), y: r.daily.map(x => x.count), marker: { color: C.teal } }], { yaxis: { title: "predictions", rangemode: "tozero", dtick: 1 } }, 240);
+      document.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => { try { await api("/predictions/" + b.dataset.del, { method: "DELETE" }); toast("Deleted"); load(); } catch (e) { toast(e.message); } });
+    } catch (e) { $("#body").innerHTML = errBox(e); }
+  };
+  ["hD", "hF", "hT", "hS"].forEach(i => $("#" + i).onchange = load); $("#hV").onchange = load; $("#hR").onclick = load; load();
+}
+
+/* ---------------- Reports ---------------- */
+async function reports(root) {
+  root.innerHTML = `<div class="toolbar">${diseaseSelect("fDis", { trainedOnly: true, value: firstTrained() })}<button class="btn" id="dl">Download Markdown</button><button class="btn sec" id="pr">Print / Save PDF</button></div><div class="card" id="body">${loading()}</div>`;
+  const load = async () => {
+    const d = $("#fDis").value; if (!d) { $("#body").innerHTML = empty("No trained models"); return; }
+    try { const r = await api(`/reports/${d}?format=json`); $("#body").innerHTML = `<pre style="white-space:pre-wrap;font:13px/1.6 ui-monospace,Menlo,monospace;margin:0">${esc(r.markdown)}</pre>`; $("#dl").onclick = () => location.href = `/api/reports/${d}`; }
+    catch (e) { $("#body").innerHTML = errBox(e); }
+  };
+  $("#pr").onclick = () => window.print(); $("#fDis").onchange = load; load();
+}
+
+/* ---------------- Settings ---------------- */
+async function settings(root) {
+  const [sys, h, runs] = await Promise.all([api("/system"), api("/health"), api("/train/runs")]);
+  root.innerHTML = `<div class="grid g2"><div class="card"><h3>System status</h3><table><tr><td>Environment</td><td>${esc(sys.environment)}</td></tr><tr><td>Database</td><td><span class="badge ${h.database.persistent ? "good" : "warn"}">${esc(h.database.mode)}</span> ${esc(h.database.note || "")}</td></tr><tr><td>Models loaded</td><td>${h.models_loaded}</td></tr><tr><td>Python</td><td>${esc(sys.python)}</td></tr>${Object.entries(sys.versions).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}<tr><td>Prediction retention</td><td>${sys.retention_days} days; inputs stored: ${sys.store_inputs}</td></tr><tr><td>Admin actions protected</td><td>${sys.admin_protected ? "yes" : "no (development)"}</td></tr><tr><td>Max upload</td><td>${sys.max_upload_mb} MB</td></tr></table></div>
+  <div class="card"><h3>Admin actions</h3><p class="sub">Data cleaning, upload, training and deletion need the admin token when one is configured.</p><div class="field"><label for="tok">Admin token</label><input type="password" id="tok" value="${esc(sessionStorage.getItem("adminToken") || "")}" autocomplete="off"></div>
+  <div class="tw" style="margin-top:10px"><table><tr><th>Disease</th><th>Status</th><th>Actions</th></tr>${DIS.map(d => { const [b, t] = badgeFor(d.status); return `<tr><td>${esc(d.name)}</td><td><span class="badge ${b}">${t}</span></td><td><label class="btn sm sec" style="display:inline-block;cursor:pointer">Upload<input type="file" data-up="${d.key}" accept=".csv,.xlsx,.xls,.tsv" hidden></label> <button class="btn sm sec" data-clean="${d.key}" ${d.dataset_status !== "tabular" ? "disabled" : ""}>Clean</button> <button class="btn sm" data-train="${d.key}" ${d.dataset_status !== "tabular" ? "disabled" : ""}>Train</button></td></tr>`; }).join("")}</table></div><div id="act" class="hint" style="margin-top:8px"></div>
+  <button class="btn sec sm" id="purge" style="margin-top:10px">Delete predictions older than retention</button></div></div>
+  <div class="card" style="margin-top:18px"><h3>Training runs</h3><div id="runs"></div></div><div class="alert info" style="margin-top:18px">${esc(sys.disclaimer)}</div>`;
+  const showRuns = rs => $("#runs").innerHTML = rs.length ? `<div class="tw"><table><tr><th>Disease</th><th>Status</th><th>Started</th><th>Detail</th></tr>${rs.map(r => `<tr><td>${esc(DISEASE_NAMES[r.disease])}</td><td><span class="badge ${r.status === "completed" ? "good" : r.status === "failed" ? "bad" : "warn"}">${esc(r.status)}</span></td><td>${esc((r.started_at || "").slice(0, 19).replace("T", " "))}</td><td style="white-space:normal">${esc(r.error || (r.progress || []).slice(-1)[0] || r.algorithm || "")}</td></tr>`).join("")}</table></div>` : empty("No runs recorded");
+  showRuns(runs);
+  $("#tok").onchange = e => { sessionStorage.setItem("adminToken", e.target.value); toast("Token saved for this session"); };
+  const poll = async () => { const rs = await api("/train/runs"); showRuns(rs); if (rs.some(r => r.status === "running")) setTimeout(poll, 2500); else { await loadDiseases(); toast("Training finished"); } };
+  document.querySelectorAll("[data-train]").forEach(b => b.onclick = async () => { try { await api("/train/" + b.dataset.train, { method: "POST" }); toast("Training started"); poll(); } catch (e) { toast(e.message); } });
+  document.querySelectorAll("[data-clean]").forEach(b => b.onclick = async () => { b.disabled = true; try { const r = await api("/datasets/" + b.dataset.clean + "/clean", { method: "POST" }); $("#act").textContent = `Cleaned: ${r.original_rows} -> ${r.cleaned_rows} rows`; } catch (e) { toast(e.message); } b.disabled = false; });
+  document.querySelectorAll("[data-up]").forEach(i => i.onchange = async () => { const fd = new FormData(); fd.append("file", i.files[0]); try { await api("/datasets/" + i.dataset.up + "/upload", { method: "POST", body: fd }); toast("Uploaded. Now clean and train."); await loadDiseases(); } catch (e) { toast(e.message); } });
+  $("#purge").onclick = async () => { try { const r = await api("/predictions", { method: "DELETE" }); toast(`Deleted ${r.deleted} record(s)`); } catch (e) { toast(e.message); } };
+}
+
+/* ---------------- Router ---------------- */
+async function tbImagePage(root) {
+  root.innerHTML = `
+    <section class="card">
+      <h2>TB Image Prediction</h2>
+      <p>Upload a chest X-ray image to get an AI-generated prediction.</p>
+
+      <input id="tbFile" type="file" accept="image/*" />
+
+      <div id="tbPreview" style="margin-top:16px;"></div>
+
+      <button id="tbPredict" class="btn" style="margin-top:16px;">
+        Analyse Image
+      </button>
+
+      <div id="tbResult" style="margin-top:20px;"></div>
+
+      <p style="margin-top:16px;font-size:13px;color:#888;">
+        Research demo only. This prediction is not a medical diagnosis.
+      </p>
+    </section>
+  `;
+
+  const fileInput = root.querySelector("#tbFile");
+  const preview = root.querySelector("#tbPreview");
+  const resultBox = root.querySelector("#tbResult");
+  const predictBtn = root.querySelector("#tbPredict");
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    preview.innerHTML = "";
+
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(file);
+    img.style.maxWidth = "320px";
+    img.style.maxHeight = "320px";
+    img.style.borderRadius = "12px";
+
+    preview.appendChild(img);
+    resultBox.innerHTML = "";
+  });
+
+  predictBtn.addEventListener("click", async () => {
+    const file = fileInput.files[0];
+
+    if (!file) {
+      resultBox.textContent = "Please select an X-ray image first.";
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    predictBtn.disabled = true;
+    predictBtn.textContent = "Analysing...";
+    resultBox.textContent = "Please wait...";
+
+    try {
+      const response = await fetch("/api/predict/tb-image", {
+        method: "POST",
+        body: formData
+      });
+
+      const json = await response.json();
+
+      if (!response.ok || json.ok === false) {
+        throw new Error(json.error?.message || "Prediction failed.");
+      }
+
+      const data = json.data ?? json;
+
+      resultBox.replaceChildren();
+
+      const heading = document.createElement("h3");
+      heading.textContent = "Prediction: " + data.predicted_class;
+      resultBox.appendChild(heading);
+
+      const confidence = document.createElement("p");
+      confidence.textContent =
+        "Model confidence: " +
+        (Number(data.confidence) * 100).toFixed(2) + "%";
+      resultBox.appendChild(confidence);
+
+      if (data.gradcam_png_base64) {
+        const gradTitle = document.createElement("h3");
+        gradTitle.textContent = "Grad-CAM Explainability";
+        resultBox.appendChild(gradTitle);
+
+        const gradImg = document.createElement("img");
+        gradImg.src = "data:image/png;base64," + data.gradcam_png_base64;
+        gradImg.alt = "Grad-CAM heatmap highlighting image regions";
+        gradImg.style.maxWidth = "400px";
+        gradImg.style.width = "100%";
+        gradImg.style.borderRadius = "12px";
+        resultBox.appendChild(gradImg);
+      }
+
+      const disclaimer = document.createElement("p");
+      disclaimer.textContent =
+        data.disclaimer ||
+        "Research demo only. Not intended for clinical diagnosis.";
+      resultBox.appendChild(disclaimer);
+
+    } catch (error) {
+      resultBox.textContent = error.message || "Something went wrong.";
+    } finally {
+      predictBtn.disabled = false;
+      predictBtn.textContent = "Analyse Image";
+    }
+  });
+}
+async function breastUltrasoundPage(root) {
+  root.innerHTML = `
+    <section class="card">
+      <h2>Breast Ultrasound Prediction</h2>
+      <p>Upload a breast ultrasound image for an AI research prediction.</p>
+
+      <input id="breastFile" type="file"
+        accept="image/png,image/jpeg,image/webp" />
+
+      <div id="breastPreview" style="margin-top:16px;"></div>
+
+      <button id="breastPredict" class="btn"
+        style="margin-top:16px;">
+        Analyse Image
+      </button>
+
+      <div id="breastResult" style="margin-top:20px;"></div>
+
+      <p style="margin-top:16px;font-size:13px;color:#888;">
+        Research demo only. This prediction is not a medical diagnosis.
+      </p>
+    </section>
+  `;
+
+  const fileInput = root.querySelector("#breastFile");
+  const preview = root.querySelector("#breastPreview");
+  const resultBox = root.querySelector("#breastResult");
+  const predictBtn = root.querySelector("#breastPredict");
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    preview.replaceChildren();
+
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(file);
+    img.style.maxWidth = "320px";
+    img.style.maxHeight = "320px";
+    img.style.borderRadius = "12px";
+
+    preview.appendChild(img);
+    resultBox.replaceChildren();
+  });
+
+  predictBtn.addEventListener("click", async () => {
+    const file = fileInput.files[0];
+
+    if (!file) {
+      resultBox.textContent = "Please select an ultrasound image first.";
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    predictBtn.disabled = true;
+    predictBtn.textContent = "Analysing...";
+    resultBox.textContent = "Please wait...";
+
+    try {
+      const response = await fetch("/api/predict/breast-ultrasound", {
+        method: "POST",
+        body: formData
+      });
+
+      const json = await response.json();
+
+      if (!response.ok || json.ok === false) {
+        throw new Error(
+          json.error?.message || "Prediction failed."
+        );
+      }
+
+      const data = json.data ?? json;
+      resultBox.replaceChildren();
+
+      const heading = document.createElement("h3");
+      heading.textContent = "Prediction: " + data.predicted_class;
+      resultBox.appendChild(heading);
+
+      const confidence = document.createElement("p");
+      confidence.textContent =
+        "Model confidence: " +
+        (Number(data.confidence) * 100).toFixed(2) + "%";
+      resultBox.appendChild(confidence);
+
+      if (data.probabilities) {
+        const title = document.createElement("h4");
+        title.textContent = "Class probabilities";
+        resultBox.appendChild(title);
+
+        const list = document.createElement("ul");
+
+        Object.entries(data.probabilities).forEach(([label, value]) => {
+          const item = document.createElement("li");
+          const probability = Number(value);
+
+          item.textContent = label + ": " +
+            (probability <= 1
+              ? (probability * 100).toFixed(2)
+              : probability.toFixed(2)) + "%";
+
+          list.appendChild(item);
+        });
+
+        resultBox.appendChild(list);
+      }
+
+      if (data.gradcam_png_base64) {
+        const title = document.createElement("h3");
+        title.textContent = "Grad-CAM Explainability";
+        resultBox.appendChild(title);
+
+        const img = document.createElement("img");
+        img.src = "data:image/png;base64," + data.gradcam_png_base64;
+        img.alt = "Grad-CAM heatmap for the ultrasound image";
+        img.style.maxWidth = "400px";
+        img.style.width = "100%";
+        img.style.borderRadius = "12px";
+
+        resultBox.appendChild(img);
+      }
+
+      const disclaimer = document.createElement("p");
+      disclaimer.textContent = data.disclaimer ||
+        "Research demo only. Not intended for clinical diagnosis.";
+      resultBox.appendChild(disclaimer);
+
+    } catch (error) {
+      resultBox.textContent = error.message || "Something went wrong.";
+    } finally {
+      predictBtn.disabled = false;
+      predictBtn.textContent = "Analyse Image";
+    }
+  });
+}
+const ROUTES = {
+  overview: overview,
+  predict: predictPage,
+  "tb-image": tbImagePage,
+  "breast-ultrasound": breastUltrasoundPage,
+  performance,
+  xai,
+  fairness,
+  datasets,
+  history,
+  reports,
+  settings
+};
+async function route() {
+  const key = (location.hash.slice(1) || "overview"); const p = PAGES.find(x => x[0] === key) || PAGES[0];
+  document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("on", a.dataset.k === p[0])); $("#pageTitle").textContent = p[1]; document.title = `${p[1]} - FairXAI`;
+  $("#side").classList.remove("open"); const root = $("#main"); root.innerHTML = loading();
+  try { await loadDiseases(); root.style.animation = "none"; void root.offsetWidth; root.style.animation = ""; await ROUTES[p[0]](root); } catch (e) { root.innerHTML = errBox(e); }
+  api("/health").then(h => { const el = $("#dbPill"); el.textContent = h.database.persistent ? "MongoDB connected" : "DB: " + h.database.mode; el.className = "pill " + (h.database.persistent ? "ok" : "warn"); }).catch(() => { $("#dbPill").textContent = "Backend offline"; });
+}
+$("#nav").innerHTML = PAGES.map(([k, t, d]) => `<a href="#${k}" data-k="${k}"><svg viewBox="0 0 24 24"><path d="${d}"/></svg>${t}</a>`).join("");
+$("#burger").onclick = () => $("#side").classList.toggle("open"); window.addEventListener("hashchange", route); route();
+

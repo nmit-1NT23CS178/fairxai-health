@@ -1,0 +1,6 @@
+.env
+data/raw
+data/processed
+tests
+__pycache__
+.git

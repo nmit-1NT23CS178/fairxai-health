@@ -1,0 +1,96 @@
+{
+  "task": "three-class TB image dataset classification",
+  "classes": [
+    "health",
+    "sick",
+    "tb"
+  ],
+  "train_images": 6600,
+  "validation_images": 1800,
+  "train_class_counts": {
+    "health": 3000,
+    "sick": 3000,
+    "tb": 600
+  },
+  "validation_class_counts": {
+    "health": 800,
+    "sick": 800,
+    "tb": 200
+  },
+  "validation_accuracy": 0.8811111111111111,
+  "validation_roc_auc": 0.9721364583333334,
+  "confusion_matrix": [
+    [
+      746,
+      9,
+      45
+    ],
+    [
+      17,
+      674,
+      109
+    ],
+    [
+      11,
+      23,
+      166
+    ]
+  ],
+  "classification_report": {
+    "health": {
+      "precision": 0.9638242894056848,
+      "recall": 0.9325,
+      "f1-score": 0.9479034307496823,
+      "support": 800.0
+    },
+    "sick": {
+      "precision": 0.9546742209631728,
+      "recall": 0.8425,
+      "f1-score": 0.8950863213811421,
+      "support": 800.0
+    },
+    "tb": {
+      "precision": 0.51875,
+      "recall": 0.83,
+      "f1-score": 0.6384615384615384,
+      "support": 200.0
+    },
+    "accuracy": 0.8811111111111111,
+    "macro avg": {
+      "precision": 0.8124161701229525,
+      "recall": 0.8683333333333333,
+      "f1-score": 0.8271504301974543,
+      "support": 1800.0
+    },
+    "weighted avg": {
+      "precision": 0.9103048934972701,
+      "recall": 0.8811111111111111,
+      "f1-score": 0.8900467274427595,
+      "support": 1800.0
+    }
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.5150942544864886,
+      "validation_loss": 0.3432045718696382,
+      "validation_accuracy": 0.8811111111111111,
+      "epoch_seconds": 390.76
+    }
+  ],
+  "best_epoch": 1,
+  "best_validation_loss": 0.3432045718696382,
+  "image_size": 160,
+  "batch_size": 16,
+  "epochs": 1,
+  "seed": 42,
+  "device": "cpu",
+  "backbone": "ResNet-18 pretrained; frozen feature extractor",
+  "training_seconds": 467.2,
+  "limitations": [
+    "Research prototype; not clinically validated.",
+    "Class labels must be verified against dataset documentation.",
+    "Validation metrics are not external clinical validation.",
+    "Frozen-backbone training is a fast baseline, not full fine-tuning."
+  ]
+}

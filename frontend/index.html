@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FairXAI - Explainable & Fair Healthcare AI</title>
+<meta name="description" content="Explainable and fair AI for healthcare decision support (research prototype)">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="css/app.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+  <aside class="side" id="side" aria-label="Main navigation">
+    <div class="brand"><span class="logo">F</span><div><b>FairXAI</b><small>Healthcare decision support</small></div></div>
+    <nav id="nav"></nav>
+    <div class="side-foot"><span id="dbPill" class="pill">...</span><p>Research prototype. Not a medical device.</p></div>
+  </aside>
+  <div class="main-wrap">
+    <header class="top"><button id="burger" class="icon-btn" aria-label="Toggle menu">&#9776;</button><h1 id="pageTitle">Overview</h1><div class="grow"></div><span class="disclaimer-chip" title="AI-generated estimates are not diagnoses">Not a diagnosis</span></header>
+    <main id="main" tabindex="-1"></main>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="js/app.js"></script>
+</body>
+</html>

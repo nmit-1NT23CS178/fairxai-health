@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+# raw medical datasets & derived data are never committed
+data/raw/*/*
+!data/raw/*/.gitkeep
+!data/raw/*/meta.json
+data/processed/*
+!data/processed/.gitkeep
+# keep data/reports and artifacts if you want to ship trained models (see README > Deployment)
+*.replaced

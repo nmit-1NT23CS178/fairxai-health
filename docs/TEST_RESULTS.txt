@@ -1,0 +1,2 @@
+25 passed, 45 warnings in 35.05s
+(executed 2026-10-09 with Python 3.12.3)
