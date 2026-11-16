@@ -41,6 +41,9 @@ def compute_metrics(y, p, thr=0.5, curves=False) -> dict:
 
 
 TARGET_RECALL = 0.90
+# Calibrated probabilities are rarely exactly 1.0, so a threshold of 1.0 would label every score
+# "below threshold" even when the model is certain. Cap it to keep the screening rule meaningful.
+MAX_THRESHOLD = 0.999
 
 
 def choose_threshold(y, p, target_recall=TARGET_RECALL) -> tuple[float, str]:
@@ -57,5 +60,11 @@ def choose_threshold(y, p, target_recall=TARGET_RECALL) -> tuple[float, str]:
             spec = (~pred & (y == 0)).sum() / max(1, N)
             if spec >= best_spec: best_t, best_spec = float(t), spec
     if best_t is None: best_t, best_spec = float(p.min()), 0.0
-    return best_t, (f"highest threshold keeping validation recall >= {target_recall:.0%} (validation specificity at this threshold = {best_spec:.3f}); "
+    capped = best_t > MAX_THRESHOLD
+    if capped:
+        best_t = MAX_THRESHOLD
+        pred = p >= best_t
+        best_spec = float((~pred & (y == 0)).sum() / max(1, N))
+    note = " (capped at 0.999: the validation scores were near-perfectly separated)" if capped else ""
+    return best_t, (f"highest threshold keeping validation recall >= {target_recall:.0%} (validation specificity at this threshold = {best_spec:.3f}){note}; "
                     "chosen for screening where missed cases are costlier than false alarms")

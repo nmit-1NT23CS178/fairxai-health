@@ -1,6 +1,6 @@
 """REST API (all responses: {ok: bool, data|error})."""
 from __future__ import annotations
-import datetime as dt, hmac, sys, platform
+import datetime as dt, hmac, os, sys, platform
 from functools import wraps
 from pathlib import Path
 from flask import Blueprint, jsonify, request, current_app as app, Response
@@ -49,17 +49,54 @@ def _vf(e): return err("validation_error", "Invalid input", 422, details=e.error
 def _de(e): return err("dataset_error", str(e), 422)
 
 
+def _db_state():
+    db = app.db
+    alive = db.ping() if db.ok else db.ensure()
+    persistent = db.mode == "mongodb" and alive
+    return db, alive, persistent
+
+
 @bp.get("/health")
 def health():
-    db = app.db
-    return ok(dict(status="ok", database=dict(mode=db.mode, connected=db.ok, persistent=db.mode == "mongodb", note=db.error),
-                   models_loaded=sum(1 for d in DISEASES if inf.latest_version(d)), time=dt.datetime.utcnow().isoformat() + "Z"))
+    db, alive, persistent = _db_state()
+    models = {d: inf.latest_version(d) for d in DISEASES}
+    image_dir = Path(os.environ.get("IMAGE_ARTIFACT_DIR", Path(__file__).resolve().parents[3] / "artifacts"))
+    image_models = {
+        "tb_image": (image_dir / "tb_image" / "best_model.pth").exists(),
+        "breast_ultrasound": (image_dir / "breast_ultrasound" / "best_model.pth").exists(),
+    }
+    # In production a non-persistent database is a degraded state, but the service stays up so the
+    # dashboard can explain the problem instead of the whole deployment failing silently.
+    status = "degraded" if (app.cfg.PRODUCTION and not persistent) else "ok"
+    return ok(dict(status=status, database=dict(mode=db.mode, connected=alive, persistent=persistent,
+                                                required=app.cfg.PRODUCTION, note=db.error),
+                   models_loaded=sum(1 for v in models.values() if v), models=models,
+                   image_models=image_models,
+                   image_models_loaded=sum(1 for v in image_models.values() if v),
+                   environment=app.cfg.ENV, commit=getattr(app.cfg, "COMMIT", "unknown"),
+                   time=dt.datetime.utcnow().isoformat() + "Z"))
+
+
+@bp.get("/ready")
+def ready():
+    db, alive, persistent = _db_state()
+    ok_db = persistent if app.cfg.PRODUCTION else alive
+    if not ok_db:
+        return err("not_ready", "Database is not available; prediction history cannot be persisted.", 503,
+                   database=dict(mode=db.mode, connected=alive, note=db.error))
+    return ok(dict(ready=True, database=dict(mode=db.mode, persistent=persistent)))
 
 
 @bp.get("/system")
 def system():
     import sklearn, shap, xgboost, fairlearn, lime, pandas
-    return ok(dict(python=platform.python_version(), versions=dict(scikit_learn=sklearn.__version__, xgboost=xgboost.__version__, shap=shap.__version__, fairlearn=fairlearn.__version__, pandas=pandas.__version__),
+    from importlib.metadata import version, PackageNotFoundError
+    try:
+        torch_version = version("torch")
+        torchvision_version = version("torchvision")
+    except PackageNotFoundError:
+        torch_version = torchvision_version = None
+    return ok(dict(python=platform.python_version(), versions=dict(scikit_learn=sklearn.__version__, xgboost=xgboost.__version__, shap=shap.__version__, fairlearn=fairlearn.__version__, pandas=pandas.__version__, torch=torch_version, torchvision=torchvision_version),
                    database=dict(mode=app.db.mode, note=app.db.error), retention_days=app.cfg.PREDICTION_RETENTION_DAYS, store_inputs=app.cfg.STORE_PREDICTION_INPUTS,
                    admin_protected=bool(app.cfg.ADMIN_TOKEN), max_upload_mb=app.cfg.MAX_CONTENT_LENGTH // 1048576, environment=app.cfg.ENV, disclaimer=DISCLAIMER))
 

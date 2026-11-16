@@ -1,6 +1,8 @@
 
 from pathlib import Path
 import io
+import json
+import os
 
 import numpy as np
 import torch
@@ -10,25 +12,25 @@ from torchvision import models, transforms
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MODEL_PATH = ROOT / "artifacts" / "tb_image" / "best_model.pth"
-CAM_DIR = ROOT / "artifacts" / "tb_image" / "gradcam"
+IMAGE_DIR = Path(os.environ.get("IMAGE_ARTIFACT_DIR", ROOT / "artifacts"))
+MODEL_PATH = IMAGE_DIR / "tb_image" / "best_model.pth"
+METRICS_PATH = IMAGE_DIR / "tb_image" / "metrics.json"
 
+# Small CPU-only hosts: one thread keeps memory and CPU use predictable.
+torch.set_num_threads(int(os.environ.get("TORCH_NUM_THREADS", "1")))
 DEVICE = torch.device("cpu")
-IMAGE_SIZE = 160
-
-# Must match the class order used by torchvision.datasets.ImageFolder.
-DATA_DIR = ROOT / "data" / "raw" / "tb" / "tb_detection" / "images" / "train"
 
 if not MODEL_PATH.exists():
     raise FileNotFoundError(f"TB model not found: {MODEL_PATH}")
 
-from torchvision.datasets import ImageFolder
-
-if not DATA_DIR.exists():
-    raise FileNotFoundError(f"TB training directory not found: {DATA_DIR}")
-
-_classes_ds = ImageFolder(DATA_DIR)
-CLASSES = _classes_ds.classes
+# Class order and image size are read from the shipped metrics file, NOT from data/raw: the raw
+# dataset is intentionally excluded from the Docker image, so depending on it broke production.
+try:
+    _metrics = json.loads(METRICS_PATH.read_text(encoding="utf-8"))
+except Exception:
+    _metrics = {}
+CLASSES = _metrics.get("classes") or ["health", "sick", "tb"]
+IMAGE_SIZE = int(_metrics.get("image_size", 160))
 
 model = models.resnet18(weights=None)
 model.fc = nn.Linear(model.fc.in_features, len(CLASSES))
@@ -111,22 +113,15 @@ def predict_tb_image(file_bytes):
     overlay[:, :, 2] *= (1 - heatmap * 0.45)
     overlay = np.clip(overlay, 0, 1)
 
-    # Encode the visualization in memory; no user upload is saved to disk.
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
+    # Compose the side-by-side image with Pillow: matplotlib pulls in tens of MB of native
+    # libraries and is unnecessary for a fixed two-panel PNG on a memory-constrained host.
+    original_u8 = (np.clip(original, 0, 1) * 255).astype(np.uint8)
+    overlay_u8 = (np.clip(overlay, 0, 1) * 255).astype(np.uint8)
+    canvas = Image.new("RGB", (IMAGE_SIZE * 2, IMAGE_SIZE))
+    canvas.paste(Image.fromarray(original_u8), (0, 0))
+    canvas.paste(Image.fromarray(overlay_u8), (IMAGE_SIZE, 0))
     buffer = io.BytesIO()
-    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
-    axes[0].imshow(original)
-    axes[0].set_title("Uploaded image")
-    axes[0].axis("off")
-    axes[1].imshow(overlay)
-    axes[1].set_title("Grad-CAM explanation")
-    axes[1].axis("off")
-    fig.tight_layout()
-    fig.savefig(buffer, format="png", dpi=120)
-    plt.close(fig)
+    canvas.save(buffer, format="PNG")
     buffer.seek(0)
 
     return {

@@ -3,7 +3,13 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
+.venv*/
 venv/
+# logs & agent tooling
+*.log
+pip*.log
+train*.log
+.commandcode/
 # raw medical datasets & derived data are never committed
 data/raw/*/*
 !data/raw/*/.gitkeep
@@ -12,3 +18,5 @@ data/processed/*
 !data/processed/.gitkeep
 # keep data/reports and artifacts if you want to ship trained models (see README > Deployment)
 *.replaced
+.DS_Store
+Thumbs.db

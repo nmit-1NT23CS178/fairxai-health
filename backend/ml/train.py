@@ -121,7 +121,7 @@ def train_disease(disease: str, progress=lambda m: None, search_iter: int = 8) -
     out = ARTIFACT_DIR / disease / version
     schema = build_schema(X_tr, num, cat, disease)
     progress("computing SHAP/LIME background and global explanations")
-    background = X_tr.sample(min(len(X_tr), 200), random_state=SEED)
+    background = X_tr.sample(min(len(X_tr), 100), random_state=SEED)
     bundle = dict(pipeline=pipe, calibrator=cal, threshold=thr, num=num, cat=cat, columns=list(X.columns), background_raw=background)
     out.mkdir(parents=True, exist_ok=True)
     joblib.dump(bundle, out / "model.joblib")

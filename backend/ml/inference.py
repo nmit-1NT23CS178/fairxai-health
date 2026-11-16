@@ -94,11 +94,15 @@ def predict(disease, inputs, version=None, explain=True, lime=False):
     row, warnings = validate_inputs(meta["feature_schema"], inputs)
     df = pd.DataFrame([row])[bundle["columns"]]
     raw = float(bundle["pipeline"].predict_proba(df)[0, 1])
-    p = float(apply_calibrator(bundle["calibrator"], [raw])[0]); thr = meta["threshold"]
-    flagged = p >= thr; t = meta["test_metrics"]
+    p = float(apply_calibrator(bundle["calibrator"], [raw])[0]); t = meta["test_metrics"]
+    # Some near-separable datasets produced a stored threshold of ~1.0, which labels an
+    # almost-certain positive as "below threshold". Flag with a capped decision threshold while
+    # keeping the stored, reproducible threshold (and its metrics) visible to the UI.
+    stored_thr = float(meta["threshold"]); thr = min(stored_thr, 0.999)
+    flagged = p >= thr
     near = abs(p - thr) < 0.1
     res = dict(disease=disease, disease_name=meta["disease_name"], model_version=meta["version"], algorithm=meta["algorithm"],
-               probability=p, threshold=thr, threshold_rule=meta["threshold_rule"], flagged=bool(flagged),
+               probability=p, threshold=stored_thr, decision_threshold=thr, threshold_rule=meta["threshold_rule"], flagged=bool(flagged),
                label=("Model score above screening threshold" if flagged else "Model score below screening threshold"),
                confidence=dict(calibration="Platt-scaled on validation data", test_brier=t["brier"], test_roc_auc=t["roc_auc"],
                                test_recall=t["recall"], test_specificity=t["specificity"], test_n=t["n"],

@@ -1,13 +1,42 @@
-# Render.com blueprint: single service serving API + dashboard. Set MONGO_URI and ADMIN_TOKEN in the dashboard (sync: false).
+# Render.com blueprint: ONE service serves the REST API and the dashboard.
+# MONGO_URI and ADMIN_TOKEN are secrets and must be entered in the Render dashboard (sync: false).
+#
+# SIZING NOTE: the service runs 4 tabular models plus two CPU PyTorch image models
+# (ResNet-18). Measured peak RSS with all modules exercised is ~767 MB, so the Free/Starter
+# 512 MB instance is NOT sufficient for image uploads. Use the Standard (2 GB) plan for the
+# full feature set; 512 MB only fits the tabular-only workload.
 services:
   - type: web
-    name: fairxai
+    name: fairxai-health
     runtime: docker
-    plan: free
+    plan: free            # change to "standard" (2 GB) for the image modules
+    region: singapore
     healthCheckPath: /api/health
+    autoDeploy: true
     envVars:
-      - {key: APP_ENV, value: production}
-      - {key: MONGO_DB, value: fairxai}
-      - {key: MONGO_URI, sync: false}
-      - {key: ADMIN_TOKEN, sync: false}
-      - {key: CORS_ORIGINS, sync: false}
+      - key: APP_ENV
+        value: production
+      - key: MONGO_DB
+        value: fairxai
+      - key: MONGO_URI
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      # Never fall back to a non-persistent DB in production.
+      - key: ALLOW_MEMORY_DB
+        value: "0"
+      # Public demo: store scores/explanations only, never patient inputs.
+      - key: STORE_PREDICTION_INPUTS
+        value: "0"
+      - key: PREDICTION_RETENTION_DAYS
+        value: "90"
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: WEB_THREADS
+        value: "4"
+      - key: TORCH_NUM_THREADS
+        value: "1"
+      - key: LOG_LEVEL
+        value: INFO

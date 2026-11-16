@@ -1,6 +1,7 @@
 from pathlib import Path
 import io
 import base64
+import os
 
 import numpy as np
 import torch
@@ -10,11 +11,12 @@ from torchvision import models, transforms
 
 
 ROOT = Path(__file__).resolve().parents[2]
+IMAGE_DIR = Path(os.environ.get("IMAGE_ARTIFACT_DIR", ROOT / "artifacts"))
 
-MODEL_PATH = (
-    ROOT / "artifacts" / "breast_ultrasound" / "best_model.pth"
-)
+MODEL_PATH = IMAGE_DIR / "breast_ultrasound" / "best_model.pth"
 
+# Small CPU-only hosts: one thread keeps memory and CPU use predictable.
+torch.set_num_threads(int(os.environ.get("TORCH_NUM_THREADS", "1")))
 DEVICE = torch.device("cpu")
 IMAGE_SIZE = 224
 
@@ -134,26 +136,15 @@ def predict_breast_ultrasound(file_bytes):
 
     overlay = np.clip(overlay, 0, 1)
 
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
+    # Compose the side-by-side image with Pillow: matplotlib is not needed for a fixed PNG and
+    # costs tens of MB on small hosts.
+    original_u8 = (np.clip(original, 0, 1) * 255).astype(np.uint8)
+    overlay_u8 = (np.clip(overlay, 0, 1) * 255).astype(np.uint8)
+    canvas = Image.new("RGB", (IMAGE_SIZE * 2, IMAGE_SIZE))
+    canvas.paste(Image.fromarray(original_u8), (0, 0))
+    canvas.paste(Image.fromarray(overlay_u8), (IMAGE_SIZE, 0))
     buffer = io.BytesIO()
-
-    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
-
-    axes[0].imshow(original)
-    axes[0].set_title("Uploaded ultrasound")
-    axes[0].axis("off")
-
-    axes[1].imshow(overlay)
-    axes[1].set_title("Grad-CAM explanation")
-    axes[1].axis("off")
-
-    fig.tight_layout()
-    fig.savefig(buffer, format="png", dpi=120)
-    plt.close(fig)
-
+    canvas.save(buffer, format="PNG")
     buffer.seek(0)
 
     return {
