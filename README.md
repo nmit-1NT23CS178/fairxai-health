@@ -82,4 +82,6 @@ image pipeline (`artifacts/tb_image/`), and breast ultrasound by `artifacts/brea
 * No user accounts/roles (single admin token). `users` collection not created.
 * Datasets are public benchmarks: no external validation; none of the models is clinically validated.
 * Fairness is limited to attributes present (sex/age) and is only computed for tabular models.
-* Render Free/Starter 512 MB cannot serve the image modules reliably; see sizing above.
+* Render Free/Starter 512 MB cannot serve the image modules reliably; the current deployment detects
+  this and returns HTTP 503 `image_capacity` for image uploads (tabular modules are unaffected).
+  Upgrade to the 2 GB Standard plan to enable them; see sizing above.

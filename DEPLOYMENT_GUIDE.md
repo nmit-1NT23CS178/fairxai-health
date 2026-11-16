@@ -1,5 +1,10 @@
 # FairXAI-Health - Deployment Guide
 
+**Current deployment (verified 2026-11-16):**
+<https://fairxai-health.onrender.com> — Render service `fairxai-health`, commit `36b6d5e`,
+MongoDB Atlas connected (`persistent=true`), 4 tabular models live; image modules return a clear
+503 on the 512 MB tier (upgrade to Standard 2 GB to enable them).
+
 Single Flask service (REST API + dashboard + both image modules) on **Render**, persistent storage on
 **MongoDB Atlas**. No separate frontend is required: the dashboard is served at `/`.
 
@@ -86,18 +91,27 @@ Environment variables (Render dashboard -> Environment):
 First build installs CPU PyTorch plus the scientific stack; allow several minutes. Render's health
 check is `GET /api/health`.
 
-### Sizing (measured)
+### Sizing (measured and confirmed on Render)
 
 | Workload | Peak RSS |
 |---|---|
 | Tabular only (4 models + SHAP/LIME) | ~330 MB |
 | Tabular + TB X-ray + breast ultrasound | **~767 MB** (measured locally, CPU) |
 
-The Free/Starter **512 MB** instance is not sufficient for the image modules: an image upload can push
-the process past the limit and Render will restart it. Options:
-* **Standard 2 GB** (recommended) for the full feature set - no code changes needed.
-* Stay on 512 MB and use tabular endpoints only; image uploads may fail with 502/restarts.
-  (No in-app switch is used, so nothing is silently disabled.)
+The deployed Free instance is **512 MB**. `/api/health` confirms `image_capacity_mb=512`, so the image
+endpoints detect the limit and return:
+
+```json
+HTTP 503 {"error":{"code":"image_capacity","limit_mb":512,"required_mb":900,
+          "message":"Image inference needs about 900 MB of RAM; ... upgrade ... to Standard (2 GB) ..."}}
+```
+
+This guard prevents the OOM that killed the worker during the first deployment attempt. Tabular
+predictions, SHAP/LIME, fairness, Atlas history and the dashboard are unaffected and verified.
+
+To enable the image modules, upgrade `fairxai-health` to **Standard (2 GB)** (paid, owner approval
+required). No code change is needed: `/api/health` will report `image_models_available=true` and both
+image endpoints will serve predictions with Grad-CAM. `IMAGE_MODELS_MIN_MB` defaults to `900`.
 
 Do not upgrade the plan without the account owner's approval.
 

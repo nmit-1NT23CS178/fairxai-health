@@ -16,19 +16,20 @@ python scripts/verify_artifacts.py
 
 | Result | Count |
 |---|---|
-| Passed | **35** |
+| Passed | **36** |
 | Failed | **0** |
 | Errors | **0** |
 | Skipped | **0** |
-| Duration | 30.22 s |
+| Duration | 33.09 s |
 
 Coverage includes the original 25 tests plus:
 * 6 production-configuration tests (`tests/test_production.py`): degraded DB reporting, `/api/ready`
   503 without a persistent DB, admin endpoints disabled without a token, security headers and
   `Cache-Control: no-store`, CORS allowlist, SPA fallback vs. 404 for missing assets.
-* 4 image-model tests (`tests/test_image_api.py`): health reports both image models; TB X-ray and
-  breast-ultrasound predictions with Grad-CAM; upload validation (415/400/422). These exercise the
-  real committed checkpoints and confirm TB classes no longer come from `data/raw`.
+* 5 image-model tests (`tests/test_image_api.py`): health reports both image models; TB X-ray and
+  breast-ultrasound predictions with Grad-CAM; upload validation (415/400/422); and a 503
+  `image_capacity` guard so a 512 MB instance cannot be OOM-killed. These exercise the real committed
+  checkpoints and confirm TB classes no longer come from `data/raw`.
 
 The pre-existing suite still covers: data cleaning/leakage rules, model training structure and
 serialization, health/disease registry, per-disease schema isolation, prediction + SHAP + LIME,
@@ -128,8 +129,8 @@ A local MongoDB 7.0.14 server was used (same PyMongo code path as Atlas), produc
 * **Restart test:** a second, fresh process re-read the same `prediction_id` from MongoDB and the
   dashboard summary returned `predictions.total=1`, proving persistence across application restart.
 
-**Atlas status: NOT YET VERIFIED** — no credentials were available in this session. The integration is
-identical; Atlas verification is part of the pending deployment step.
+**Atlas status: VERIFIED** on the live deployment (see section 9). The same integration was also
+reproduced locally against MongoDB 7.0.14.
 
 ## 7. Memory measurement (deployment sizing)
 
@@ -147,11 +148,44 @@ recommended, pending owner approval. Tabular-only usage fits in ~330 MB.
 
 | Item | Status |
 |---|---|
-| GitHub original repo (`nmit-1NT23CS178/fairxai-health`) | **UPDATED** — `main` at `aaf4ed6` (release commit on top of `20fe400`) |
-| Render service | **NOT VERIFIED** — no Render API key/session; `https://fairxai-health.onrender.com` currently returns HTTP 404 |
-| MongoDB Atlas | **NOT VERIFIED** — connection string/password not supplied; integration proven against real MongoDB 7.0.14 locally |
-| Public URL | **none confirmed yet** |
+| GitHub original repo (`nmit-1NT23CS178/fairxai-health`) | **UPDATED** — `main` at code release `36b6d5e` / docs commit |
+| Render service | **DEPLOYED & VERIFIED** — `https://fairxai-health.onrender.com` |
+| MongoDB Atlas | **VERIFIED** — mode `mongodb`, persistent, history survived deployments |
+| Public URL | **https://fairxai-health.onrender.com** |
+| Instance | Free, 512 MB (image modules blocked by design on this tier) |
 
-No deployment success is claimed. The code, configuration, model artifacts and verification tooling are
-ready on the original repository. Remaining steps require Render account access and the Atlas credential;
-see the final handoff notes.
+## 9. Live deployment verification (2026-11-16)
+
+`python scripts/verify_deployment.py --base-url https://fairxai-health.onrender.com`
+
+| Result | Count |
+|---|---|
+| Passed | **35** |
+| Failed | **0** |
+| Skipped | **1** (image models on the 512 MB instance) |
+
+Verified against the public URL:
+* `/api/health`: `status=ok`, `database.mode=mongodb`, `persistent=true`, commit `36b6d5e`,
+  4 tabular models loaded, both image checkpoints present.
+* `/api/ready`: HTTP 200.
+* Disease registry and dashboard: 5 supported, 4 trained.
+* CVD, diabetes, breast cancer, CKD: schema -> prediction -> SHAP (local + global) -> LIME ->
+  fairness -> metrics -> **history read back from Atlas** -> invalid input rejected with 422.
+* Atlas persistence across deployments: prediction counts increased across the redeploy
+  (CVD 2 -> 3, diabetes 3 -> 5, CKD 2 -> 3; dashboard total 16), proving records survive
+  Render restarts.
+* Unknown disease -> 404, untrained tabular TB -> 404.
+* Frontend `/` and `/js/app.js` served; TB Image and Breast Ultrasound pages present.
+* Image endpoints on 512 MB: `POST /api/predict/tb-image` and `/api/predict/breast-ultrasound`
+  return **HTTP 503** `{"code":"image_capacity","limit_mb":512,"required_mb":900}` instead of
+  crashing the service (verified directly with `curl`).
+* No fabricated results, no fake predictions: every number above came from the live API and the
+  committed model metadata.
+
+## 10. Remaining limitation
+
+The image modules are deployed but intentionally refused on the 512 MB instance because measured peak
+RSS is ~767 MB. To enable them, upgrade the Render service to **Standard (2 GB)** (paid, owner
+approval required) and set `IMAGE_MODELS_MIN_MB=900` (already the default). No code change is needed;
+`/api/health` will then report `image_models_available=true` and the image endpoints will serve
+predictions with Grad-CAM.

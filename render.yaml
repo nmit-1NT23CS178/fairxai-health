@@ -38,5 +38,7 @@ services:
         value: "4"
       - key: TORCH_NUM_THREADS
         value: "1"
+      - key: IMAGE_MODELS_MIN_MB
+        value: "900"
       - key: LOG_LEVEL
         value: INFO
