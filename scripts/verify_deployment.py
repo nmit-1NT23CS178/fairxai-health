@@ -49,6 +49,9 @@ class Checker:
             print(f"[FAIL] {name} - {type(e).__name__}: {e}")
             return False
 
+    def skip(self, name, detail):
+        print(f"[SKIP] {name} - {detail}")
+
     def get_ok(self, path):
         st, body = self.call(path)
         assert st == 200, f"HTTP {st}: {body}"
@@ -163,14 +166,22 @@ def run(base, admin_token=None, expect_mongo=True, check_images=True):
         c.check(f"{d}: history persistence", history)
 
         def invalid(d=d):
-            f = next((x for x in c.get_ok(f"/api/models/{d}/schema")["fields"] if x["type"] == "number"), None)
-            if not f:
-                return "no numeric field to invalidate"
-            bad = dict(state[d]); bad[f["name"]] = -999999
+            fields = c.get_ok(f"/api/models/{d}/schema")["fields"]
+            bad = dict(state[d])
+            f = next((x for x in fields if x["type"] in ("number", "binary") and x.get("hard_min") is not None), None)
+            if f:
+                bad[f["name"]] = f["hard_min"] - 1
+                what = f"{f['name']}={bad[f['name']]}"
+            else:
+                num = next((x for x in fields if x["type"] in ("number", "binary")), None)
+                if not num:
+                    return "no numeric field to invalidate"
+                bad[num["name"]] = "not-a-number"
+                what = f"{num['name']}='not-a-number'"
             st, body = c.call(f"/api/predict/{d}", "POST", {"inputs": bad})
             assert st == 422, f"HTTP {st}: {body}"
             assert body["error"]["code"] == "validation_error"
-            return f"rejected {f['name']}=-999999 with 422"
+            return f"rejected {what} with 422"
 
         c.check(f"{d}: invalid input rejected", invalid)
 
@@ -206,7 +217,14 @@ def run(base, admin_token=None, expect_mongo=True, check_images=True):
         return "TB X-ray + breast ultrasound + Grad-CAM OK"
 
     if check_images:
-        c.check("image models (TB X-ray, breast ultrasound)", image_models)
+        h = state["health"]
+        if h.get("image_models_available", True):
+            c.check("image models (TB X-ray, breast ultrasound)", image_models)
+        else:
+            c.skip("image models (TB X-ray, breast ultrasound)",
+                   f"deployed instance reports image_models_available=false "
+                   f"(limit={h.get('image_capacity_mb')} MB, needs>={h.get('image_models_min_mb')} MB); "
+                   "tabular modules are unaffected")
 
     def summary_after():
         d = c.get_ok("/api/dashboard/summary")

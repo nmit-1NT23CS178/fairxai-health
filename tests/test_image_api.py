@@ -55,3 +55,19 @@ def test_image_endpoints_validate_upload(client):
                                content_type="multipart/form-data")
     assert not_an_image.status_code == 422
     assert not_an_image.get_json()["error"]["code"] == "invalid_image"
+
+
+def test_image_endpoints_refuse_to_oom_a_small_instance(client, monkeypatch):
+    """On a 512 MB instance the image models would exceed the memory limit; the endpoint must return a
+    clear 503 instead of crashing the worker."""
+    from backend.app.api import routes
+
+    monkeypatch.setattr(routes, "_image_capacity", lambda: (False, 512))
+    for path in ("/api/predict/tb-image", "/api/predict/breast-ultrasound"):
+        r = client.post(path, data={"file": (io.BytesIO(_png()), "x.png")},
+                        content_type="multipart/form-data")
+        assert r.status_code == 503
+        err = r.get_json()["error"]
+        assert err["code"] == "image_capacity"
+        assert err["limit_mb"] == 512
+        assert err["required_mb"] >= 900

@@ -33,6 +33,40 @@ def _disease(d):
     return d
 
 
+# Image inference imports PyTorch and loads two ResNet-18 checkpoints; measured peak RSS is ~767 MB.
+# On a 512 MB instance the second model load OOM-kills the worker and takes the whole service down.
+# Guard the endpoints so constrained instances return a clear 503 instead of crashing.
+IMAGE_MODELS_MIN_MB = int(os.environ.get("IMAGE_MODELS_MIN_MB", "900"))
+
+
+def _cgroup_limit_mb():
+    for p in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            raw = Path(p).read_text().strip()
+            if raw and raw != "max":
+                mb = int(int(raw) // (1024 * 1024))
+                if mb < (1 << 40):  # ignore "unlimited" sentinels from cgroup v1
+                    return mb
+        except Exception:
+            continue
+    return None
+
+
+def _image_capacity():
+    """(capable, limit_mb). Set IMAGE_MODELS_FORCE=1 to bypass (local testing)."""
+    if os.environ.get("IMAGE_MODELS_FORCE") == "1":
+        return True, None
+    limit_mb = _cgroup_limit_mb()
+    return (limit_mb is None or limit_mb >= IMAGE_MODELS_MIN_MB), limit_mb
+
+
+def _image_capacity_error(limit_mb):
+    return err("image_capacity",
+               f"Image inference needs about {IMAGE_MODELS_MIN_MB} MB of RAM; this instance is limited to "
+               f"{limit_mb} MB. The tabular modules are unaffected - upgrade the Render plan to Standard (2 GB) "
+               "for the image modules.", 503, limit_mb=limit_mb, required_mb=IMAGE_MODELS_MIN_MB)
+
+
 @bp.errorhandler(KeyError)
 def _unknown(e): return err("unknown_disease", f"Unknown disease {e}. Valid: {', '.join(DISEASES)}", 404)
 
@@ -65,6 +99,7 @@ def health():
         "tb_image": (image_dir / "tb_image" / "best_model.pth").exists(),
         "breast_ultrasound": (image_dir / "breast_ultrasound" / "best_model.pth").exists(),
     }
+    image_capable, image_limit_mb = _image_capacity()
     # In production a non-persistent database is a degraded state, but the service stays up so the
     # dashboard can explain the problem instead of the whole deployment failing silently.
     status = "degraded" if (app.cfg.PRODUCTION and not persistent) else "ok"
@@ -73,6 +108,9 @@ def health():
                    models_loaded=sum(1 for v in models.values() if v), models=models,
                    image_models=image_models,
                    image_models_loaded=sum(1 for v in image_models.values() if v),
+                   image_models_available=bool(all(image_models.values()) and image_capable),
+                   image_capacity_mb=image_limit_mb,
+                   image_models_min_mb=IMAGE_MODELS_MIN_MB,
                    environment=app.cfg.ENV, commit=getattr(app.cfg, "COMMIT", "unknown"),
                    time=dt.datetime.utcnow().isoformat() + "Z"))
 
@@ -161,6 +199,9 @@ def predict(disease):
 
 @bp.post("/predict/tb-image")
 def predict_tb_image_route():
+    capable, limit_mb = _image_capacity()
+    if not capable:
+        return _image_capacity_error(limit_mb)
     uploaded = request.files.get("file")
 
     if uploaded is None or not uploaded.filename:
@@ -198,6 +239,9 @@ def predict_tb_image_route():
         )
 @bp.post("/predict/breast-ultrasound")
 def predict_breast_ultrasound_route():
+    capable, limit_mb = _image_capacity()
+    if not capable:
+        return _image_capacity_error(limit_mb)
     uploaded = request.files.get("file")
 
     if uploaded is None or not uploaded.filename:
