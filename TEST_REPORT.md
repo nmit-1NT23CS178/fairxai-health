@@ -147,9 +147,11 @@ recommended, pending owner approval. Tabular-only usage fits in ~330 MB.
 
 | Item | Status |
 |---|---|
-| GitHub original repo (`nmit-1NT23CS178/fairxai-health`) | **NOT UPDATED** — authenticated account has `push=false`; release commit prepared locally |
-| Render service | **NOT DEPLOYED/VERIFIED** — no Render API key/session available |
-| MongoDB Atlas | **NOT VERIFIED** — connection string/password not supplied |
-| Public URL | **none yet** |
+| GitHub original repo (`nmit-1NT23CS178/fairxai-health`) | **UPDATED** — `main` at `aaf4ed6` (release commit on top of `20fe400`) |
+| Render service | **NOT VERIFIED** — no Render API key/session; `https://fairxai-health.onrender.com` currently returns HTTP 404 |
+| MongoDB Atlas | **NOT VERIFIED** — connection string/password not supplied; integration proven against real MongoDB 7.0.14 locally |
+| Public URL | **none confirmed yet** |
 
-No deployment success is claimed. See the final response for the exact manual steps required.
+No deployment success is claimed. The code, configuration, model artifacts and verification tooling are
+ready on the original repository. Remaining steps require Render account access and the Atlas credential;
+see the final handoff notes.
